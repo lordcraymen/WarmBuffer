@@ -44,7 +44,6 @@ describe("UUID — full pressure (buffer exhausted, measures overhead)", () => {
   const warmUUID = createWarmBuffer(() => crypto.randomUUID(), {
     warm: 20,
     refillAt: 5,
-    uniqueness: [(s) => s],
   });
 
   bench("cold  — crypto.randomUUID() inline", () => {
@@ -64,7 +63,6 @@ describe("UUID — realistic (microtask gap, buffer stays warm)", () => {
   const warmUUID = createWarmBuffer(() => crypto.randomUUID(), {
     warm: 20,
     refillAt: 5,
-    uniqueness: [(s) => s],
   });
 
   bench("cold  — crypto.randomUUID() inline", async () => {
