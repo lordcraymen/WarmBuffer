@@ -43,44 +43,60 @@ function createWarmBuffer<T>(
   const refillAt = opts.refillAt ?? 1;
   const selectors = opts.uniqueness ?? [];
   const maxAttempts = opts.maxAttempts ?? warm * 50;
+  const hasUniqueness = selectors.length > 0;
 
-  const buf: T[] = [];
-  const keySet = new Set<string>(); // tracks keys currently IN buffer
+  // Two storage modes:
+  // - uniqueness ON:  Map<compositeKey, T> — single structure, key cached at push, O(1) dedup
+  // - uniqueness OFF: T[]               — minimal overhead, no key computation
+  const uniqueMap = hasUniqueness ? new Map<string, T>() : null;
+  const plainBuf  = hasUniqueness ? null : ([] as T[]);
+
   let refillScheduled = false;
 
   const produceOne = (): T => (isCtor(maker) ? new maker() : maker());
 
-  const tryPushUnique = (v: T): boolean => {
-    if (selectors.length === 0) {
-      buf.push(v);
+  const bufSize = (): number =>
+    hasUniqueness ? uniqueMap!.size : plainBuf!.length;
+
+  const bufPeek = (): T | undefined =>
+    hasUniqueness ? uniqueMap!.values().next().value : plainBuf![0];
+
+  const bufShift = (): T | undefined => {
+    if (!hasUniqueness) return plainBuf!.shift();
+    const entry = uniqueMap!.entries().next();
+    if (entry.done) return undefined;
+    const [k, v] = entry.value;
+    uniqueMap!.delete(k);
+    return v;
+  };
+
+  const bufClear = (): void => {
+    hasUniqueness ? uniqueMap!.clear() : (plainBuf!.length = 0);
+  };
+
+  const tryPush = (v: T): boolean => {
+    if (!hasUniqueness) {
+      plainBuf!.push(v);
       return true;
     }
     const k = makeKey(v, selectors);
-    if (keySet.has(k)) return false;
-    keySet.add(k);
-    buf.push(v);
+    if (uniqueMap!.has(k)) return false;
+    uniqueMap!.set(k, v);
     return true;
   };
 
   const fillSync = () => {
     if (warm <= 0) return;
-
     let attempts = 0;
-    while (buf.length < warm) {
-      if (attempts++ >= maxAttempts) {
-        // Avoid infinite loops if uniqueness space is too small
-        break;
-      }
-      const v = produceOne();
-      tryPushUnique(v);
+    while (bufSize() < warm) {
+      if (attempts++ >= maxAttempts) break;
+      tryPush(produceOne());
     }
   };
 
   const scheduleRefill = () => {
     if (refillScheduled) return;
     refillScheduled = true;
-
-    // refill outside the hot path
     queueMicrotask(() => {
       refillScheduled = false;
       fillSync();
@@ -91,20 +107,13 @@ function createWarmBuffer<T>(
     // Buffer empty — don't block the hot path with a sync fill.
     // Serve directly from the factory and schedule an async refill that
     // has a chance to run before the next consumer call.
-    if (buf.length === 0) {
+    if (bufSize() === 0) {
       scheduleRefill();
       return produceOne();
     }
 
-    const v = buf.shift()!;
-
-    // remove key from set when leaving buffer
-    if (selectors.length) {
-      const k = makeKey(v, selectors);
-      keySet.delete(k);
-    }
-
-    if (buf.length <= refillAt) scheduleRefill();
+    const v = bufShift()!;
+    if (bufSize() <= refillAt) scheduleRefill();
     return v;
   };
 
@@ -113,13 +122,10 @@ function createWarmBuffer<T>(
 
   // callable default getter + methods
   const fn = (() => get()) as WarmBuffer<T>;
-  fn.get = get;
-  fn.size = () => buf.length;
-  fn.peek = () => buf[0];
-  fn.clear = () => {
-    buf.length = 0;
-    keySet.clear();
-  };
+  fn.get    = get;
+  fn.size   = bufSize;
+  fn.peek   = bufPeek;
+  fn.clear  = bufClear;
   fn.fillSync = fillSync;
 
   return fn;
