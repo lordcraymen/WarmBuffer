@@ -4,6 +4,14 @@
   "description": "A pre-warmed object buffer for fast, low-latency object retrieval",
   "author": "lordcraymen",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lordcraymen/WarmBuffer.git"
+  },
+  "homepage": "https://github.com/lordcraymen/WarmBuffer#readme",
+  "bugs": {
+    "url": "https://github.com/lordcraymen/WarmBuffer/issues"
+  },
   "main": "./dist/warmbuffer.umd.js",
   "module": "./dist/warmbuffer.mjs",
   "types": "./dist/index.d.ts",
