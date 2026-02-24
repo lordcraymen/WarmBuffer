@@ -29,6 +29,7 @@
     "build": "vite build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "vitest bench",
     "coverage": "vitest run --coverage",
     "prepare": "husky"
   },
