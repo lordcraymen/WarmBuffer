@@ -1,4 +1,4 @@
-import { bench, describe, beforeAll } from "vitest";
+import { bench, describe } from "vitest";
 import { createWarmBuffer } from "../src/index";
 
 // ---------------------------------------------------------------------------
@@ -24,10 +24,23 @@ class LightObject {
 }
 
 // ---------------------------------------------------------------------------
-// 1. UUID string — cheap factory
+// NOTE on methodology
+// ---------------------------------------------------------------------------
+// "full pressure" benches call the factory in a tight sync loop.
+// The microtask queue never drains, so the buffer empties immediately and
+// every call after the first ~warm iterations hits the empty-buffer fallback
+// (direct factory call + scheduleRefill). This measures overhead, not warmth.
+//
+// "realistic" benches await a microtask gap between each call via
+// Promise.resolve(), allowing the buffer to refill between iterations.
+// This reflects actual usage where consumers are async or event-driven.
 // ---------------------------------------------------------------------------
 
-describe("UUID generation (cheap factory)", () => {
+// ---------------------------------------------------------------------------
+// 1. UUID — full pressure (tests overhead, buffer stays empty)
+// ---------------------------------------------------------------------------
+
+describe("UUID — full pressure (buffer exhausted, measures overhead)", () => {
   const warmUUID = createWarmBuffer(() => crypto.randomUUID(), {
     warm: 20,
     refillAt: 5,
@@ -38,13 +51,35 @@ describe("UUID generation (cheap factory)", () => {
     const _id = crypto.randomUUID();
   });
 
-  bench("warm  — WarmBuffer UUID", () => {
+  bench("warm  — WarmBuffer UUID (full pressure)", () => {
     const _id = warmUUID();
   });
 });
 
 // ---------------------------------------------------------------------------
-// 2. Lightweight class instantiation
+// 2. UUID — realistic (microtask gap lets buffer refill between calls)
+// ---------------------------------------------------------------------------
+
+describe("UUID — realistic (microtask gap, buffer stays warm)", () => {
+  const warmUUID = createWarmBuffer(() => crypto.randomUUID(), {
+    warm: 20,
+    refillAt: 5,
+    uniqueness: [(s) => s],
+  });
+
+  bench("cold  — crypto.randomUUID() inline", async () => {
+    const _id = crypto.randomUUID();
+    await Promise.resolve();
+  });
+
+  bench("warm  — WarmBuffer UUID (with microtask gap)", async () => {
+    const _id = warmUUID();
+    await Promise.resolve(); // lets refill microtask fire before next call
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. Lightweight class instantiation
 // ---------------------------------------------------------------------------
 
 describe("Lightweight class instantiation", () => {
@@ -60,7 +95,7 @@ describe("Lightweight class instantiation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. Heavy class instantiation (array allocation + reduce)
+// 4. Heavy class instantiation (array allocation + reduce)
 // ---------------------------------------------------------------------------
 
 describe("Heavy class instantiation (array + reduce)", () => {
@@ -76,7 +111,7 @@ describe("Heavy class instantiation (array + reduce)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Plain object factory with JSON-style payload
+// 5. Plain object factory with JSON-style payload
 // ---------------------------------------------------------------------------
 
 const makePayload = () => ({
@@ -98,7 +133,7 @@ describe("JSON-style payload object", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. Buffer overhead: warm but empty (worst-case: buffer exhausted, falls back to sync fill)
+// 6. Buffer overhead: warm=0 (measures pure WarmBuffer call cost)
 // ---------------------------------------------------------------------------
 
 describe("WarmBuffer overhead when buffer is empty (worst-case)", () => {
