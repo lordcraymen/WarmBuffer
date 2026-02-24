@@ -4,22 +4,41 @@ A pre-warmed object buffer for TypeScript. It pre-generates a pool of instances 
 
 ## When it helps — and when it doesn't
 
-WarmBuffer trades **memory and background CPU** for **hot-path latency**. The buffer overhead is a fixed ~0.5 µs per call (array shift + optional uniqueness bookkeeping). That cost only makes sense if your factory is meaningfully more expensive than the overhead itself.
+WarmBuffer trades **memory and background CPU** for **hot-path latency**. The actual overhead depends on whether `uniqueness` is enabled:
 
-Benchmarks (Node.js, V8):
+- **Without `uniqueness`** (plain array path): ~`array.shift()` cost — essentially free for any factory that does real work.
+- **With `uniqueness`** (Map path): composite key computation + `Map.set/delete` on every push/pop — noticeable overhead for sub-microsecond factories.
+
+### Benchmarks (Node.js, V8)
+
+**Full-pressure** (tight sync loop — buffer exhausts immediately, measures worst-case overhead):
 
 | Factory | Cold (ops/s) | Warm (ops/s) | Verdict |
 |---|---|---|---|
-| `crypto.randomUUID()` — ~0.08 µs | 12,700,000 | 1,750,000 | ❌ overhead dominates, **7× slower** |
-| `new LightObject()` — UUID ctor | 6,000,000 | 10,700,000 | ✅ **1.8× faster** |
-| `new HeavyObject()` — array + reduce | 246,000 | 9,600,000 | ✅ **40× faster** |
-| JSON payload — 20-element array | 837,000 | 9,200,000 | ✅ **11× faster** |
+| `crypto.randomUUID()` — no uniqueness | 10,100,000 | 9,250,000 | ✅ **near parity, ~1.09× overhead** |
+| `crypto.randomUUID()` — with uniqueness | 10,100,000 | 1,750,000 | ❌ key computation dominates, **7× slower** |
+| `new LightObject()` — UUID ctor | 4,800,000 | 9,100,000 | ✅ **1.9× faster** |
+| `new HeavyObject()` — array + reduce | 195,000 | 7,950,000 | ✅ **40× faster** |
+| JSON payload — 20-element array | 720,000 | 8,180,000 | ✅ **11× faster** |
 
-**Rule of thumb:** if your factory allocates collections, runs loops, calls multiple natives, or involves async I/O — WarmBuffer pays off. If it's a single native call, the buffer overhead exceeds the savings.
+**Realistic** (microtask gap between calls — buffer has time to refill):
+
+| Factory | Cold (ops/s) | Warm (ops/s) | Verdict |
+|---|---|---|---|
+| `crypto.randomUUID()` — no uniqueness | 4,710,000 | 2,390,000 | ⚠️ **~2× slower** — refill cost amortised over the gap |
+| `crypto.randomUUID()` — with uniqueness | 4,710,000 | 877,000 | ❌ **5× slower** — refill is expensive relative to factory |
+
+> The realistic gap in the no-uniqueness UUID case is partly noise: `Promise.resolve()` jitter on the cold side is ±14% rme, so the true gap is likely smaller.
+
+**Rule of thumb:**
+- ✅ Use WarmBuffer when your factory allocates collections, runs loops, calls multiple natives, or does async I/O.
+- ✅ Skip `uniqueness` unless you actually need deduplication — the plain array path has negligible overhead.
+- ❌ Don't use `uniqueness` for sub-microsecond factories — key computation costs more than the factory itself.
+- ❌ Don't expect gains if the consumer outruns the microtask refill (sustained tight loops). WarmBuffer is designed for bursty or async consumers.
 
 ### Empty-buffer behaviour
 
-When the buffer runs dry (e.g. traffic burst exceeds refill rate), `get()` falls through to a direct factory call — same latency as cold — and schedules a microtask refill so subsequent calls can be warm again. There is no synchronous stall on the hot path.
+When the buffer runs dry (burst exceeds refill rate), `get()` falls through to a direct factory call — same latency as cold — and schedules a microtask refill so subsequent calls can be warm again. There is no synchronous stall on the hot path.
 
 ### Future use: object pooling
 
