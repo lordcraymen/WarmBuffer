@@ -143,5 +143,23 @@ describe("createWarmBuffer", () => {
       // should have at most 2 unique items
       expect(buf.size()).toBeLessThanOrEqual(2);
     });
+
+    it("should produce directly from factory when buffer is empty and refill asynchronously", async () => {
+      const buf = createWarmBuffer(() => 42, { warm: 3, refillAt: 0 });
+      // drain all 3 items
+      buf.get(); buf.get(); buf.get();
+      expect(buf.size()).toBe(0);
+
+      // call on empty buffer — must not throw, must return the factory value
+      const v = buf.get();
+      expect(v).toBe(42);
+
+      // buffer still empty before microtask
+      expect(buf.size()).toBe(0);
+
+      // after microtask the buffer is refilled
+      await Promise.resolve();
+      expect(buf.size()).toBe(3);
+    });
   });
 });

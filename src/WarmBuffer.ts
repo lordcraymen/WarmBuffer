@@ -88,14 +88,15 @@ function createWarmBuffer<T>(
   };
 
   const get = (): T => {
-    // ensure we have at least one item synchronously
-    if (buf.length === 0) fillSync();
-
-    const v = buf.shift();
-    if (v === undefined) {
-      // extreme fallback if warm==0 or uniqueness prevented fill
+    // Buffer empty — don't block the hot path with a sync fill.
+    // Serve directly from the factory and schedule an async refill that
+    // has a chance to run before the next consumer call.
+    if (buf.length === 0) {
+      scheduleRefill();
       return produceOne();
     }
+
+    const v = buf.shift()!;
 
     // remove key from set when leaving buffer
     if (selectors.length) {
